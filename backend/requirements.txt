@@ -1,0 +1,25 @@
+# Core web framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
+# Database
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+pgvector==0.3.6
+
+# Vector search
+faiss-cpu==1.9.0
+
+# Embeddings
+sentence-transformers==3.3.1
+openai==1.57.2
+
+# Utilities
+python-multipart==0.0.17
+pydantic==2.10.3
+python-dotenv==1.0.1
+PyPDF2==3.0.1
+
+# Development
+pytest==8.3.4
+httpx==0.28.1

@@ -1,0 +1,72 @@
+# Docker
+.dockerignore
+
+# Docker volumes (data persists across container restarts)
+postgres_data/
+faiss_data/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+logs/
+log/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Node modules (if any at root)
+node_modules/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Coverage reports
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Testing
+.coverage
+coverage.xml
+*.cover
