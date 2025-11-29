@@ -28,8 +28,37 @@ class PgVectorBackend:
                 result = db.execute(text("SELECT * FROM pg_extension WHERE extname = 'vector'"))
                 if not result.fetchone():
                     logger.warning("pgvector extension not found. Run init_db.py to create it.")
+                    return
+
+                logger.info("pgvector extension available")
+
         except Exception as e:
             logger.error(f"pgvector check failed: {e}")
+
+    def _create_hnsw_index(self, db):
+        """Create HNSW index if it doesn't exist."""
+        try:
+            # Check if HNSW index already exists
+            index_check = db.execute(text("""
+                SELECT 1 FROM pg_indexes
+                WHERE tablename = :table_name AND indexname = :index_name
+            """), {"table_name": self.table_name, "index_name": f"{self.table_name}_hnsw_idx"})
+
+            if index_check.fetchone():
+                logger.info("HNSW vector index already exists")
+                return
+
+            # Create HNSW index for optimal ANN performance
+            db.execute(text(f"""
+                CREATE INDEX CONCURRENTLY IF NOT EXISTS {self.table_name}_hnsw_idx
+                ON {self.table_name}
+                USING hnsw (embedding vector_cosine_ops)
+            """))
+            db.commit()
+            logger.info("HNSW vector index created for optimal ANN performance")
+
+        except Exception as e:
+            logger.warning(f"Could not create HNSW index (this may be OK if index already exists): {e}")
 
     def _get_db(self) -> Session:
         """Get database session."""
@@ -49,43 +78,49 @@ class PgVectorBackend:
         return list(range(len(vectors)))
 
     def search(self, query_vector: List[float], top_k: int, doc_ids: Optional[List[str]] = None) -> List[Tuple[int, float]]:
-        """Search for similar vectors using pgvector."""
+        """Search for similar vectors using optimized pgvector queries."""
         try:
             with self._get_db() as db:
                 # Convert numpy array to Python list if needed
                 if hasattr(query_vector, 'tolist'):  # numpy array
                     query_vector = query_vector.tolist()
 
-                # Format vector as pgvector string literal
-                vector_str = '[' + ','.join(str(x) for x in query_vector) + ']'
+                # Use pgvector native array syntax for better performance
+                vector_str = '[' + ','.join(f"{x:.6f}" for x in query_vector) + ']'
 
-                # Build query
-                query_parts = [
-                    "SELECT chunk_id, 1 - (embedding <=> :query_vector) as similarity",
-                    f"FROM {self.table_name}",
-                    "WHERE embedding IS NOT NULL"
-                ]
-
-                params = {"query_vector": vector_str, "limit": top_k * 3}  # Oversample
+                # Oversample for better recall, then limit to top_k
+                limit = min(top_k * 3, 1000)  # Cap at 1000 for performance
 
                 if doc_ids:
-                    placeholders = ", ".join(f":doc_id_{i}" for i in range(len(doc_ids)))
-                    query_parts.append(f"AND doc_id IN ({placeholders})")
-                    for i, doc_id in enumerate(doc_ids):
-                        params[f"doc_id_{i}"] = doc_id
+                    # Optimized query with document filtering
+                    placeholders = ", ".join(f"'{doc_id}'" for doc_id in doc_ids)
+                    query = f"""
+                        SELECT chunk_id, (1.0 - (embedding <=> '{vector_str}'::vector)) as similarity
+                        FROM {self.table_name}
+                        WHERE embedding IS NOT NULL
+                          AND doc_id IN ({placeholders})
+                        ORDER BY embedding <=> '{vector_str}'::vector
+                        LIMIT {limit}
+                    """
+                else:
+                    # Direct vector search - most common case
+                    query = f"""
+                        SELECT chunk_id, (1.0 - (embedding <=> '{vector_str}'::vector)) as similarity
+                        FROM {self.table_name}
+                        WHERE embedding IS NOT NULL
+                        ORDER BY embedding <=> '{vector_str}'::vector
+                        LIMIT {limit}
+                    """
 
-                query_parts.append("ORDER BY embedding <=> :query_vector LIMIT :limit")
+                result = db.execute(text(query))
 
-                query = " ".join(query_parts)
-
-                result = db.execute(text(query), params)
-
-                # Convert to (chunk_id, score) pairs
+                # Convert to (chunk_id, score) pairs - limit to top_k after oversampling
                 results = []
                 for row in result:
                     chunk_id, similarity = row
                     results.append((int(chunk_id), float(similarity)))
 
+                # Return only top_k results (oversampling was for better recall)
                 return results[:top_k]
 
         except Exception as e:
@@ -147,8 +182,8 @@ class PgVectorBackend:
             logger.error(f"Document removal failed: {e}")
             return False
 
-    def create_index(self, index_name: str = "chunks_embedding_idx"):
-        """Create IVFFlat index on the embedding column."""
+    def create_index(self, index_name: str = "chunks_hnsw_idx", use_hnsw: bool = True):
+        """Create vector index on the embedding column. Defaults to HNSW for optimal performance."""
         try:
             with self._get_db() as db:
                 # Check if index already exists
@@ -158,21 +193,31 @@ class PgVectorBackend:
                 """), {"table_name": self.table_name, "index_name": index_name})
 
                 if not result.fetchone():
-                    # Create IVFFlat index
-                    db.execute(text(f"""
-                        CREATE INDEX CONCURRENTLY {index_name}
-                        ON {self.table_name}
-                        USING ivfflat (embedding vector_cosine_ops)
-                        WITH (lists = 100)
-                    """))
+                    if use_hnsw:
+                        # Create HNSW index for optimal ANN performance
+                        db.execute(text(f"""
+                            CREATE INDEX CONCURRENTLY {index_name}
+                            ON {self.table_name}
+                            USING hnsw (embedding vector_cosine_ops)
+                        """))
+                        logger.info(f"Created HNSW vector index: {index_name}")
+                    else:
+                        # Create IVFFlat index (legacy)
+                        db.execute(text(f"""
+                            CREATE INDEX CONCURRENTLY {index_name}
+                            ON {self.table_name}
+                            USING ivfflat (embedding vector_cosine_ops)
+                            WITH (lists = 100)
+                        """))
+                        logger.info(f"Created IVFFlat vector index: {index_name}")
+
                     db.commit()
-                    logger.info(f"Created pgvector index: {index_name}")
                     return True
                 else:
-                    logger.info(f"pgvector index {index_name} already exists")
+                    logger.info(f"Vector index {index_name} already exists")
                     return True
         except Exception as e:
-            logger.error(f"Failed to create pgvector index: {e}")
+            logger.error(f"Failed to create vector index: {e}")
             return False
 
     def get_documents_with_vectors(self) -> List[str]:
