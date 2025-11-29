@@ -1,18 +1,21 @@
-# Semantic Search Service
+# Open Search Service
 
-A self-hosted semantic + lexical search service with RAG capabilities, supporting multiple vector backends (FAISS/pgvector) and embedding providers (sentence-transformers/OpenAI).
+A self-hosted semantic + lexical search service with RAG capabilities, supporting multiple vector backends (pgvector/FAISS) and embedding providers (sentence-transformers/OpenAI). Features PDF processing, configurable search results, and comprehensive web interface.
 
 ## Features
 
 - **Semantic Search**: Vector similarity search using embeddings
-- **Hybrid Search**: Combines semantic and full-text search
-- **Multiple Vector Backends**: FAISS (HNSW) or PostgreSQL pgvector
+- **Hybrid Search**: Combines semantic and full-text search with configurable result counts
+- **Multiple Vector Backends**: PostgreSQL pgvector (recommended) or FAISS (HNSW)
 - **Flexible Embeddings**: Local sentence-transformers or OpenAI API
-- **Optional Reranking**: Cross-encoder for improved result quality
+- **Advanced Reranking**: Cross-encoder for improved result quality (enabled by default)
 - **Document Ingestion**: Chunking, embedding, and indexing pipeline
+- **Multi-format Support**: Text files (.txt, .md) and PDF documents with automatic text extraction
+- **Synchronous/Asynchronous Processing**: Choose immediate or background ingestion
 - **REST API**: FastAPI backend with comprehensive endpoints
-- **Web Interface**: Clean React frontend for search and ingestion
-- **Containerized**: Docker Compose deployment with PostgreSQL
+- **Web Interface**: Clean React frontend for search, ingestion, and configuration
+- **Containerized**: Docker Compose deployment with PostgreSQL and pgvector
+- **Configuration Management**: Web-based settings page with real-time validation
 
 ## Architecture
 
@@ -20,15 +23,16 @@ A self-hosted semantic + lexical search service with RAG capabilities, supportin
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   React UI      │    │   FastAPI       │    │  PostgreSQL     │
 │   (Port 3000)   │◄──►│   Backend       │◄──►│  + pgvector     │
-│                 │    │   (Port 8000)   │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌─────────────────┐
-                       │   Vector Store   │
-                       │   (FAISS or     │
-                       │    pgvector)    │
-                       └─────────────────┘
+│                 │    │   (Port 8000)   │    │  (vectors +     │
+└─────────────────┘    └─────────────────┘    │   metadata)     │
+                                              └─────────────────┘
+                                              │
+                                              ▼
+                                       ┌─────────────────┐
+                                       │ Alternative:    │
+                                       │ FAISS Vector    │
+                                       │ Store (file)    │
+                                       └─────────────────┘
 ```
 
 ## Quick Start
@@ -44,18 +48,21 @@ A self-hosted semantic + lexical search service with RAG capabilities, supportin
 1. **Clone and configure**:
    ```bash
    git clone <repository-url>
-   cd semantic-search-service
-   cp .env.example .env
+   cd open-search-service
+   cp open-search-service.env.example .env
    ```
 
-2. **Edit `.env`** (optional - defaults should work):
+2. **Edit `.env`** (optional - defaults are optimized):
    ```bash
-   # Use FAISS (default) or pgvector
-   VECTOR_BACKEND=faiss
+   # Uses pgvector (recommended) or FAISS
+   VECTOR_BACKEND=pgvector
 
-   # Use local embeddings (default) or OpenAI
+   # Uses local embeddings (recommended) or OpenAI
    EMBEDDING_PROVIDER=local
    # OPENAI_API_KEY=your_key_here  # Only if using OpenAI
+
+   # Configure search results (default: 5)
+   TOP_K=10
    ```
 
 3. **Start services**:
@@ -75,30 +82,42 @@ A self-hosted semantic + lexical search service with RAG capabilities, supportin
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql://...` | PostgreSQL connection string |
-| `VECTOR_BACKEND` | `faiss` | Vector store: `faiss` or `pgvector` |
+| `DB_POOL_SIZE` | `10` | Database connection pool size |
+| `DB_MAX_OVERFLOW` | `20` | Maximum overflow connections |
+| `VECTOR_BACKEND` | `pgvector` | Vector store: `pgvector` or `faiss` |
 | `EMBEDDING_PROVIDER` | `local` | Embeddings: `local` or `openai` |
-| `OPENAI_API_KEY` | - | Required for OpenAI embeddings |
-| `RERANKER_ENABLED` | `false` | Enable cross-encoder reranking |
 | `EMBED_MODEL` | `all-mpnet-base-v2` | Local embedding model |
+| `EMBED_DIM` | `768` | Embedding vector dimensions |
+| `OPENAI_API_KEY` | - | Required for OpenAI embeddings |
+| `OPENAI_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `TOP_K` | `5` | Number of search results to return |
 | `CHUNK_TOKENS` | `512` | Maximum tokens per chunk |
+| `RERANKER_ENABLED` | `true` | Enable cross-encoder reranking |
+| `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Reranker model |
 | `LOG_LEVEL` | `INFO` | Logging level |
+
+**FAISS-specific variables** (only when `VECTOR_BACKEND=faiss`):
+- `FAISS_INDEX_PATH=/data/faiss`
+- `FAISS_M=32`, `FAISS_EF_CONSTRUCTION=200`, `FAISS_EF_SEARCH=64`
 
 ### Switching Vector Backends
 
-**FAISS (default)**:
-- Faster searches
+**pgvector (recommended default)**:
+- Integrated with PostgreSQL for ACID compliance
+- Better for concurrent access and large datasets
+- Automatic backup/restore with database
+- Requires PostgreSQL with pgvector extension
+
+**FAISS (alternative)**:
+- Faster searches for read-heavy workloads
 - Persistent index on disk
 - No PostgreSQL extensions required
+- Single-writer architecture
 
-**pgvector**:
-- Integrated with PostgreSQL
-- Better for large datasets
-- Requires pgvector extension
-
-To switch to pgvector:
+To switch to FAISS:
 ```bash
 # In .env
-VECTOR_BACKEND=pgvector
+VECTOR_BACKEND=faiss
 
 # Rebuild and restart
 docker-compose down
@@ -132,7 +151,9 @@ OPENAI_MODEL=text-embedding-3-small  # or text-embedding-3-large
 POST /ingest
 Content-Type: multipart/form-data
 
-# Form fields: doc_id, title?, text?, file?, metadata?
+# Form fields: doc_id*, title?, text?, file?, metadata?, sync?
+# Supported file types: .txt, .md, .pdf (automatic text extraction)
+# sync=true for immediate completion, false for background processing
 ```
 
 ### Search
@@ -161,10 +182,24 @@ Content-Type: application/json
 
 ### Ingest Document
 ```bash
+# Text ingestion (synchronous)
 curl -X POST http://localhost:8000/ingest \
   -F "doc_id=doc1" \
   -F "title=My Document" \
-  -F "text=This is the content of my document..."
+  -F "text=This is the content of my document..." \
+  -F "sync=true"
+
+# File ingestion (PDF/text)
+curl -X POST http://localhost:8000/ingest \
+  -F "doc_id=doc2" \
+  -F "file=@document.pdf" \
+  -F "metadata={\"author\":\"John Doe\"}"
+
+# Background processing
+curl -X POST http://localhost:8000/ingest \
+  -F "doc_id=doc3" \
+  -F "text=Large document content..." \
+  -F "sync=false"  # Default: background processing
 ```
 
 ### Search
@@ -250,29 +285,45 @@ Access the **Settings** page in the web interface (http://localhost:3000) to con
 
 ### Configuration Examples
 
-#### Basic Local Setup (Default)
+#### Production pgvector Setup (Recommended)
 ```bash
-# Uses FAISS + local embeddings
-VECTOR_BACKEND=faiss
-EMBEDDING_PROVIDER=local
-DATABASE_URL=postgresql://user:pass@localhost:5432/search_db
-```
-
-#### Production pgvector Setup
-```bash
-# Uses PostgreSQL for both metadata and vectors
+# Optimized production configuration
 VECTOR_BACKEND=pgvector
 EMBEDDING_PROVIDER=local
 DATABASE_URL=postgresql://prod_user:secure_pass@prod-db.company.com:5432/search_prod
+TOP_K=10
+RERANKER_ENABLED=true
 ```
 
-#### Cloud Embeddings Setup
+#### Basic Local Setup
 ```bash
-# Uses OpenAI for embeddings, local vectors
-VECTOR_BACKEND=faiss
+# Default configuration (works out of the box)
+VECTOR_BACKEND=pgvector
+EMBEDDING_PROVIDER=local
+DATABASE_URL=postgresql://search_user:search_password@postgres:5432/search_db
+TOP_K=5
+RERANKER_ENABLED=true
+```
+
+#### High-Performance Cloud Setup
+```bash
+# OpenAI embeddings + pgvector
+VECTOR_BACKEND=pgvector
 EMBEDDING_PROVIDER=openai
 OPENAI_API_KEY=sk-your-key-here
+OPENAI_MODEL=text-embedding-3-large
 DATABASE_URL=postgresql://user:pass@localhost:5432/search_db
+TOP_K=15
+```
+
+#### Development FAISS Setup
+```bash
+# FAISS for development/testing
+VECTOR_BACKEND=faiss
+EMBEDDING_PROVIDER=local
+DATABASE_URL=postgresql://search_user:search_password@postgres:5432/search_db
+TOP_K=5
+RERANKER_ENABLED=false
 ```
 
 ### Configuration Persistence
@@ -315,18 +366,31 @@ npm run dev
 **Local models** (sentence-transformers):
 ```bash
 # In .env
-EMBED_MODEL=all-MiniLM-L6-v2  # Smaller, faster
-# or
-EMBED_MODEL=all-mpnet-base-v2  # Default, better quality
+EMBED_MODEL=all-MiniLM-L6-v2        # 384 dims, fastest (~50ms)
+EMBED_MODEL=all-mpnet-base-v2       # 768 dims, balanced (default)
+EMBED_MODEL=all-distilroberta-v1    # 768 dims, good quality
 ```
 
 **OpenAI models**:
 ```bash
 # In .env
-OPENAI_MODEL=text-embedding-3-small   # 1536 dims, cheaper
-OPENAI_MODEL=text-embedding-3-large   # 3072 dims, better
-OPENAI_MODEL=text-embedding-ada-002   # Legacy
+OPENAI_MODEL=text-embedding-3-small   # 1536 dims, ~$0.02/1M tokens
+OPENAI_MODEL=text-embedding-3-large   # 3072 dims, ~$0.13/1M tokens (best quality)
+OPENAI_MODEL=text-embedding-ada-002   # 1536 dims, legacy model
 ```
+
+### Configuring Search Results
+
+Control the number of results returned by search queries:
+
+```bash
+# In .env or Settings page
+TOP_K=5      # Default: balanced results
+TOP_K=10     # More comprehensive results
+TOP_K=3      # Quick top matches only
+```
+
+**Note**: `TOP_K` affects both API responses and web interface display.
 
 ## Security Considerations
 
@@ -345,21 +409,39 @@ OPENAI_MODEL=text-embedding-ada-002   # Legacy
 ### Common Issues
 
 **"pgvector extension not found"**
-- Ensure PostgreSQL 15+ is used
+- Uses `pgvector/pgvector:pg15` image (has pgvector pre-installed)
 - Run `init_db.py` after container starts
+- Check PostgreSQL logs: `docker-compose logs postgres`
+
+**"PDF processing failed"**
+- Ensure PyPDF2 is installed (included in requirements.txt)
+- Check PDF isn't password-protected or corrupted
+- For scanned PDFs, text extraction may be limited
 
 **"CUDA out of memory"**
 - Reduce batch sizes or use CPU-only mode
-- Use smaller embedding models
+- Use smaller embedding models (`all-MiniLM-L6-v2`)
+- Increase container memory limits
+
+**"Search returns 0 results"**
+- Ensure documents are fully ingested (check async processing)
+- Try different search terms or disable hybrid search
+- Check vector backend is properly initialized
 
 **"Connection refused"**
 - Check service health: `docker-compose ps`
-- Wait for PostgreSQL to be ready
+- Wait for PostgreSQL to be ready (may take 30-60 seconds)
+- Verify port mappings: `docker-compose ps`
 
 **Slow ingestion**
-- Reduce `CHUNK_TOKENS` for more chunks
-- Use CPU-optimized models
-- Increase container resources
+- Reduce `CHUNK_TOKENS` for more parallel processing
+- Use CPU-optimized models for faster embedding
+- Enable sync mode for immediate feedback
+- Increase container resources (--memory, --cpus)
+
+**"Collation version mismatch"**
+- Harmless warning, can be ignored
+- Fixed automatically in future deployments
 
 ### Logs
 
