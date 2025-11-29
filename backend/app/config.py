@@ -80,23 +80,21 @@ class ConfigManager:
 
     def load_config(self) -> ServiceConfig:
         """Load configuration from file or create default."""
-        if self._config is not None:
-            return self._config
-
+        # Always reload from file to ensure dynamic config changes are picked up
         # Try to load from file
         if self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
                     data = json.load(f)
-                self._config = ServiceConfig(**data)
+                config = ServiceConfig(**data)
                 logger.info(f"Loaded configuration from {self.config_file}")
-                return self._config
+                return config
             except Exception as e:
                 logger.warning(f"Failed to load config from {self.config_file}: {e}")
 
         # Create default configuration from environment
-        self._config = self._create_default_config()
-        return self._config
+        config = self._create_default_config()
+        return config
 
     def save_config(self, config: ServiceConfig) -> bool:
         """Save configuration to file."""
@@ -104,7 +102,6 @@ class ConfigManager:
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_file, 'w') as f:
                 json.dump(config.dict(), f, indent=2)
-            self._config = config
             logger.info(f"Saved configuration to {self.config_file}")
             return True
         except Exception as e:

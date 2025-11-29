@@ -1,29 +1,44 @@
 # Build stage
-FROM node:18-alpine as build
+FROM node:20-alpine as build
+
+# Install pnpm
+RUN npm install -g pnpm
 
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml* ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (update lockfile if needed)
+RUN pnpm install
 
 # Copy source code
 COPY . .
 
 # Build the app
-RUN npm run build
+RUN pnpm run build
 
 # Production stage
-FROM nginx:alpine
+FROM node:20-alpine as production
 
-# Copy built app to nginx
-COPY --from=build /app/dist /usr/share/nginx/html
+# Install pnpm
+RUN npm install -g pnpm
 
-# Copy nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+WORKDIR /app
+
+# Copy package files
+COPY package.json ./
+COPY --from=build /app/pnpm-lock.yaml ./
+
+# Install only production dependencies (use frozen lockfile for reproducibility)
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy built app from build stage
+COPY --from=build /app/.next ./.next
+COPY --from=build /app/public ./public
+COPY --from=build /app/package.json ./
 
 EXPOSE 3000
 
-CMD ["nginx", "-g", "daemon off;"]
+# Start the application
+CMD ["pnpm", "start"]
