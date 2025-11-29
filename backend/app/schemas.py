@@ -27,6 +27,8 @@ class SearchRequest(BaseModel):
 
     q: str = Field(..., description="Search query text")
     top_k: int = Field(default_factory=lambda: config_manager.load_config().search.top_k, description="Number of results to return", ge=1, le=50)
+    offset: int = Field(0, description="Offset for pagination", ge=0)
+    limit: int = Field(default_factory=lambda: config_manager.load_config().search.top_k, description="Limit for pagination", ge=1, le=50)
     hybrid: bool = Field(True, description="Whether to use hybrid search (vector + text)")
     rerank: bool = Field(True, description="Whether to apply reranking")
 
@@ -47,7 +49,9 @@ class SearchResponse(BaseModel):
 
     query: str
     results: List[SearchResult]
-    total_results: int
+    total_count: int
+    offset: int
+    limit: int
     search_time_ms: float
 
 
@@ -114,12 +118,14 @@ class EmbeddingConfig(BaseModel):
     model: str = "all-mpnet-base-v2"
     dimension: int = 768
     openai_api_key: Optional[str] = None
+    openai_model: str = "text-embedding-3-small"
 
 
 class SearchConfig(BaseModel):
     """Search configuration schema."""
 
     chunk_tokens: int = 512
+    top_k: int = Field(5, description="Default number of search results to return", ge=1, le=50)
     reranker_enabled: bool = False
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 

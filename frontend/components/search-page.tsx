@@ -2,8 +2,8 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
-import { Search, Clock, FileText, Sparkles, ToggleLeft, ToggleRight, BookMarked } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Search, Clock, FileText, Sparkles, ToggleLeft, ToggleRight, BookMarked, ChevronLeft, ChevronRight } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -23,6 +23,15 @@ interface SearchResult {
   metadata?: Record<string, unknown>
 }
 
+interface SearchResponse {
+  query: string
+  results: SearchResult[]
+  total_count: number
+  offset: number
+  limit: number
+  search_time_ms: number
+}
+
 export function SearchPage() {
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<SearchResult[]>([])
@@ -32,6 +41,10 @@ export function SearchPage() {
   const [rerank, setRerank] = useState(true)
   const [topK, setTopK] = useState(5)
   const [hasSearched, setHasSearched] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const [pageSize, setPageSize] = useState(5)
+  const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -58,8 +71,37 @@ export function SearchPage() {
         setRerank(config.search.reranker_enabled)
       }
     } catch (err) {
-      console.warn("Could not reload config, using current values:", err)
+      console.warn("Could not load config, using defaults:", err)
     }
+  }
+
+  const performSearch = async (page: number = 1) => {
+    const offset = (page - 1) * pageSize
+
+    const response = await fetch(`${API_BASE}/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        q: query,
+        top_k: topK,
+        offset,
+        limit: pageSize,
+        hybrid,
+        rerank
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Search failed: ${response.statusText}`)
+    }
+
+    const data: SearchResponse = await response.json()
+    setResults(data.results)
+    setTotalCount(data.total_count)
+    setCurrentPage(page)
+    setSearchTime(data.search_time_ms)
+
+    return data
   }
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -69,26 +111,27 @@ export function SearchPage() {
     setLoading(true)
     setResults([])
     setHasSearched(true)
+    setCurrentPage(1) // Reset to first page for new search
 
     try {
-      // Reload config before search to ensure latest settings
-      await loadConfig()
-
-      const response = await fetch(`${API_BASE}/search`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: query, top_k: topK, hybrid, rerank }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`Search failed: ${response.statusText}`)
-      }
-
-      const data = await response.json()
-      setResults(data.results)
-      setSearchTime(data.search_time_ms)
+      await performSearch(1) // Start from page 1
     } catch (err) {
       toast.error("Search failed", {
+        description: err instanceof Error ? err.message : "Unknown error occurred",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handlePageChange = async (page: number) => {
+    if (page < 1 || page > Math.ceil(totalCount / pageSize)) return
+
+    setLoading(true)
+    try {
+      await performSearch(page)
+    } catch (err) {
+      toast.error("Failed to load page", {
         description: err instanceof Error ? err.message : "Unknown error occurred",
       })
     } finally {
@@ -114,7 +157,7 @@ export function SearchPage() {
       {/* Search Form */}
       <Card className="max-w-4xl mx-auto border-2 shadow-lg">
         <CardContent className="pt-6">
-          <form onSubmit={handleSearch} className="space-y-6">
+          <form ref={formRef} onSubmit={handleSearch} className="space-y-6">
             {/* Search Input */}
             <div className="relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
@@ -139,6 +182,13 @@ export function SearchPage() {
                   type="number"
                   value={topK}
                   onChange={(e) => setTopK(Number.parseInt(e.target.value) || 5)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      setCurrentPage(1) // Reset to first page when changing result count
+                      formRef.current?.requestSubmit()
+                    }
+                  }}
                   className="w-16 h-8 text-center bg-card"
                   min={1}
                   max={50}
@@ -194,7 +244,12 @@ export function SearchPage() {
             <div className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
               <span className="font-medium">
-                Found {results.length} {results.length === 1 ? "result" : "results"}
+                Found {totalCount} {totalCount === 1 ? "result" : "results"}
+                {totalCount > pageSize && (
+                  <span className="text-muted-foreground ml-2">
+                    (showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalCount)})
+                  </span>
+                )}
               </span>
             </div>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -238,6 +293,55 @@ export function SearchPage() {
               </Card>
             ))}
           </div>
+
+          {/* Pagination */}
+          {totalCount > pageSize && (
+            <div className="flex items-center justify-center gap-2 mt-8">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1 || loading}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, Math.ceil(totalCount / pageSize)) }, (_, i) => {
+                  const pageNum = Math.max(1, Math.min(
+                    Math.ceil(totalCount / pageSize) - 4,
+                    currentPage - 2
+                  )) + i
+
+                  if (pageNum > Math.ceil(totalCount / pageSize)) return null
+
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={pageNum === currentPage ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      disabled={loading}
+                      className="w-8 h-8 p-0"
+                    >
+                      {pageNum}
+                    </Button>
+                  )
+                })}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === Math.ceil(totalCount / pageSize) || loading}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

@@ -100,7 +100,9 @@ async def lifespan(app: FastAPI):
 
         # Initialize reranker if enabled
         global reranker
-        if os.getenv("RERANKER_ENABLED", "false").lower() == "true":
+        from .config import get_config
+        config = get_config()
+        if config.search.reranker_enabled:
             reranker = get_reranker()
 
         logger.info("Service started successfully")
@@ -317,9 +319,11 @@ async def search_documents_endpoint(request: SearchRequest):
         if not request.q.strip():
             raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-        results = await search_documents(
+        results, total_count = await search_documents(
             query=request.q,
             top_k=request.top_k,
+            offset=request.offset,
+            limit=request.limit,
             hybrid=request.hybrid,
             rerank=request.rerank,
             embedder=embedder,
@@ -333,7 +337,9 @@ async def search_documents_endpoint(request: SearchRequest):
         return SearchResponse(
             query=request.q,
             results=results,
-            total_results=len(results),
+            total_count=total_count,    # Total results available
+            offset=request.offset,
+            limit=request.limit,
             search_time_ms=search_time
         )
 
@@ -472,6 +478,31 @@ async def validate_database_connection(db_url: str = Form(...)):
     except Exception as e:
         logger.error(f"Failed to validate database connection: {e}")
         raise HTTPException(status_code=500, detail="Failed to validate database connection")
+
+
+@app.post("/config/reload")
+async def reload_configuration():
+    """Reload configuration from file and apply changes where possible."""
+    try:
+        from .config import get_config
+        # Reload configuration
+        config = get_config()
+
+        # Update global variables where possible
+        global reranker
+        if config.search.reranker_enabled and reranker is None:
+            from .embedder import get_reranker
+            reranker = get_reranker()
+        elif not config.search.reranker_enabled and reranker is not None:
+            reranker = None
+
+        return {
+            "message": "Configuration reloaded successfully",
+            "note": "Some changes may require server restart (embedding model, vector backend)"
+        }
+    except Exception as e:
+        logger.error(f"Failed to reload configuration: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reload configuration")
 
 
 @app.exception_handler(Exception)

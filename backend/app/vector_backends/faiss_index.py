@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class FAISSIndex:
     """FAISS-based vector index with HNSW algorithm."""
 
-    def __init__(self, dimension: int, index_path: str = "/data/faiss.index"):
+    def __init__(self, dimension: int, index_path: str = "/data/faiss.index", M: int = 32, ef_construction: int = 200, ef_search: int = 64):
         try:
             import faiss
         except ImportError:
@@ -29,9 +29,9 @@ class FAISSIndex:
         self.lock = threading.Lock()
 
         # HNSW parameters
-        self.M = int(os.getenv("FAISS_M", "32"))  # Number of neighbors per layer
-        self.efConstruction = int(os.getenv("FAISS_EF_CONSTRUCTION", "200"))  # Construction parameter
-        self.efSearch = int(os.getenv("FAISS_EF_SEARCH", "64"))  # Search parameter
+        self.M = M  # Number of neighbors per layer
+        self.efConstruction = ef_construction  # Construction parameter
+        self.efSearch = ef_search  # Search parameter
 
         # Initialize or load index
         self.index = None

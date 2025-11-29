@@ -35,6 +35,7 @@ class EmbeddingConfig(BaseModel):
     model: str = Field("all-mpnet-base-v2", description="Local model name")
     dimension: int = Field(768, description="Embedding dimension")
     openai_api_key: Optional[str] = Field(None, description="OpenAI API key")
+    openai_model: str = Field("text-embedding-3-small", description="OpenAI model name")
 
 
 class SearchConfig(BaseModel):
@@ -150,7 +151,8 @@ class ConfigManager:
                 provider=os.getenv("EMBEDDING_PROVIDER", "local"),
                 model=os.getenv("EMBED_MODEL", "all-mpnet-base-v2"),
                 dimension=int(os.getenv("EMBED_DIM", "768")),
-                openai_api_key=os.getenv("OPENAI_API_KEY")
+                openai_api_key=os.getenv("OPENAI_API_KEY"),
+                openai_model=os.getenv("OPENAI_MODEL", "text-embedding-3-small")
             ),
             search=SearchConfig(
                 chunk_tokens=int(os.getenv("CHUNK_TOKENS", "512")),

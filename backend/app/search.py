@@ -17,19 +17,23 @@ logger = logging.getLogger(__name__)
 async def search_documents(
     query: str,
     top_k: int,
+    offset: int,
+    limit: int,
     hybrid: bool,
     rerank: bool,
     embedder: EmbeddingProvider,
     vector_backend: VectorBackend,
     reranker: Optional[CrossEncoderReranker],
     db: Session
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], int]:
     """Search documents using vector, lexical, or hybrid search.
 
     Args:
         query: Search query text
-        top_k: Number of results to return
-        hybrid: Whether to use hybrid search (vector + lexical)
+        top_k: Number of candidates to retrieve before pagination
+        offset: Offset for pagination
+        limit: Limit for pagination
+        hybrid: Whether to use hybrid search (vector + text)
         rerank: Whether to apply reranking
         embedder: Embedding provider
         vector_backend: Vector backend
@@ -37,7 +41,7 @@ async def search_documents(
         db: Database session
 
     Returns:
-        List of search results with metadata
+        Tuple of (paginated results, total count)
     """
     start_time = time.time()
 
@@ -84,12 +88,16 @@ async def search_documents(
             all_candidates = all_candidates[:top_k]
 
         # Fetch full chunk data
-        results = _fetch_chunk_data(all_candidates, db)
+        all_results = _fetch_chunk_data(all_candidates, db)
+
+        # Apply pagination
+        total_count = len(all_results)
+        paginated_results = all_results[offset:offset + limit]
 
         search_time = time.time() - start_time
-        logger.info(f"Search completed in {search_time:.3f}s, returned {len(results)} results")
+        logger.info(f"Search completed in {search_time:.3f}s, found {total_count} results, returning {len(paginated_results)} (offset: {offset}, limit: {limit})")
 
-        return results
+        return paginated_results, total_count
 
     except Exception as e:
         logger.error(f"Search failed: {e}")

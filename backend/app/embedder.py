@@ -143,13 +143,16 @@ class OpenAIProvider(EmbeddingProvider):
 
 def get_embedder() -> EmbeddingProvider:
     """Factory function to get the configured embedding provider."""
-    provider = os.getenv("EMBEDDING_PROVIDER", "local").lower()
+    from .config import get_config
+    config = get_config()
+
+    provider = config.embedding.provider.lower()
 
     if provider == "openai":
-        model = os.getenv("OPENAI_MODEL", "text-embedding-3-small")
+        model = getattr(config.embedding, 'openai_model', 'text-embedding-3-small')
         return OpenAIProvider(model=model)
     elif provider == "local":
-        model = os.getenv("EMBED_MODEL", "all-mpnet-base-v2")
+        model = config.embedding.model
         return SentenceTransformerProvider(model_name=model)
     else:
         raise ValueError(f"Unknown embedding provider: {provider}")
@@ -176,5 +179,7 @@ class CrossEncoderReranker:
 
 def get_reranker() -> CrossEncoderReranker:
     """Get the configured reranker."""
-    model = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+    from .config import get_config
+    config = get_config()
+    model = config.search.reranker_model
     return CrossEncoderReranker(model_name=model)

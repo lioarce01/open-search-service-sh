@@ -38,6 +38,7 @@ export function SettingsPage() {
   const [embeddingModel, setEmbeddingModel] = useState("all-mpnet-base-v2")
   const [embeddingDimension, setEmbeddingDimension] = useState(768)
   const [openaiApiKey, setOpenaiApiKey] = useState("")
+  const [openaiModel, setOpenaiModel] = useState("text-embedding-3-small")
 
   // Search
   const [chunkTokens, setChunkTokens] = useState(512)
@@ -71,6 +72,7 @@ export function SettingsPage() {
       setEmbeddingModel(config.embedding.model)
       setEmbeddingDimension(config.embedding.dimension)
       setOpenaiApiKey(config.embedding.openai_api_key || "")
+      setOpenaiModel(config.embedding.openai_model || "text-embedding-3-small")
 
       setChunkTokens(config.search.chunk_tokens)
       setTopK(config.search.top_k)
@@ -129,6 +131,7 @@ export function SettingsPage() {
           model: embeddingModel,
           dimension: embeddingDimension,
           openai_api_key: openaiApiKey || null,
+          openai_model: openaiModel,
         },
         search: {
           chunk_tokens: chunkTokens,
@@ -145,6 +148,13 @@ export function SettingsPage() {
       })
 
       if (!response.ok) throw new Error("Failed to save configuration")
+
+      // Try to reload configuration on the server
+      try {
+        await fetch(`${API_BASE}/config/reload`, { method: "POST" })
+      } catch (reloadErr) {
+        console.warn("Could not reload configuration on server:", reloadErr)
+      }
 
       setMessage("Configuration saved successfully!")
       toast.success("Configuration saved!")
@@ -176,14 +186,29 @@ export function SettingsPage() {
           <div className="h-px w-12 bg-gradient-to-l from-transparent to-border" />
         </div>
         <h2 className="text-3xl font-bold text-foreground tracking-tight">Service Configuration</h2>
-        <p className="text-muted-foreground max-w-md mx-auto">Configure database, embeddings, and search settings</p>
+        <p className="text-muted-foreground max-w-md mx-auto">
+          Configure database, embeddings, and search settings
+        </p>
+        <div className="text-sm text-muted-foreground mt-2 max-w-lg mx-auto">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="text-green-600">✓ Dynamic: Search settings, Reranker</div>
+            <div className="text-orange-600">⟳ Restart needed: Embeddings, Vector backend</div>
+          </div>
+        </div>
       </div>
 
       {/* Messages */}
       {message && (
         <Alert className="max-w-4xl mx-auto border-2 border-green-600/30 bg-green-50/50">
           <CheckCircle className="h-4 w-4 text-green-600" />
-          <AlertDescription className="text-green-800">{message}</AlertDescription>
+          <AlertDescription className="text-green-800">
+            {message}
+            {message.includes("saved") && (
+              <div className="mt-2 text-sm">
+                <strong>Note:</strong> Some changes (embedding models, vector backends) require server restart to take effect.
+              </div>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -380,16 +405,31 @@ export function SettingsPage() {
             )}
 
             {embeddingProvider === "openai" && (
-              <div className="space-y-2">
-                <Label>OpenAI API Key</Label>
-                <Input
-                  type="password"
-                  value={openaiApiKey}
-                  onChange={(e) => setOpenaiApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className="font-mono bg-muted/30 border-2"
-                />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label>OpenAI Model</Label>
+                  <Select value={openaiModel} onValueChange={setOpenaiModel}>
+                    <SelectTrigger className="bg-muted/30 border-2">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text-embedding-3-small">text-embedding-3-small</SelectItem>
+                      <SelectItem value="text-embedding-3-large">text-embedding-3-large</SelectItem>
+                      <SelectItem value="text-embedding-ada-002">text-embedding-ada-002</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>OpenAI API Key</Label>
+                  <Input
+                    type="password"
+                    value={openaiApiKey}
+                    onChange={(e) => setOpenaiApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="font-mono bg-muted/30 border-2"
+                  />
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
